@@ -4,7 +4,7 @@
   "description": "",
   "main": "dist/retrytx.js",
   "scripts": {
-    "build": "tsc",
+    "build": "rimraf ./dist && tsc",
     "test": "echo \"tests?  what tests?!\""
   },
   "keywords": [],
@@ -17,7 +17,9 @@
   },
   "dependencies": {
     "@stacks/transactions": "^3.0.0",
+    "dotenv": "^10.0.0",
     "getopts": "^2.3.0",
-    "node-fetch": "^2.6.5"
+    "node-fetch": "^2.6.5",
+    "rimraf": "^3.0.2"
   }
 }

@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 import getopts from "getopts";
 import { c32address } from "c32check";
+import * as dotenv from "dotenv";
 import {
   AuthType,
   broadcastTransaction,
@@ -15,6 +16,8 @@ import {
 } from "@stacks/transactions";
 import { StacksNetwork, StacksMainnet, StacksTestnet } from "@stacks/network";
 import { TransactionVersion } from "@stacks/common";
+
+dotenv.config();
 
 interface Tx {
   network: StacksNetwork;
@@ -32,8 +35,8 @@ const ENV_SECRET_KEY = process.env.SECRET_KEY || "";
 
 const options = getopts(process.argv, {
   alias: { help: ["h"] },
-  default: { network: "mainnet", fee: "" },
-  string: ["txid", "key", "fee"],
+  default: { network: "mainnet", fee: "", mempool: false },
+  string: ["txid", "key", "fee", "mempool"],
 });
 
 function usage(exit: number) {
@@ -94,6 +97,40 @@ function stxaddress(signer: string): string {
     return c32address(26, signer);
   }
 }
+async function getNodeNonce(address: string): Promise<number> {
+  let network: StacksNetwork;
+
+  if (options.network === "mainnet") {
+    network = new StacksMainnet();
+  } else {
+    network = new StacksTestnet();
+  }
+  if (options.mempool === false) {
+    const url = `${network.coreApiUrl}/v2/accounts/${address}`;
+    // console.debug(`fetching from ${url}...`);
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (resp.status !== 200) {
+      console.error(`error: ${resp.status} ${JSON.stringify(data, null, 2)}`);
+      process.exit(1);
+    }
+    console.log("data.nonce: ", data.nonce);
+
+    return data.nonce;
+  } else {
+    //https://stacks-node-api.mainnet.stacks.co/extended/v1/address/SP2WBG45H8KZHRRAAMAYEMAP4MSDWJ9EXX14EYT1/nonces
+    const url = `${network.coreApiUrl}/extended/v1/address/${address}/nonces`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (resp.status !== 200) {
+      console.error(`error: ${resp.status} ${JSON.stringify(data, null, 2)}`);
+      process.exit(1);
+    }
+    console.log("data.possible_next_nonce: ", data.possible_next_nonce);
+
+    return data.possible_next_nonce;
+  }
+}
 
 async function fetchtx(): Promise<Tx> {
   let network: StacksNetwork;
@@ -125,7 +162,6 @@ async function fetchtx(): Promise<Tx> {
     process.exit(1);
   }
   const tx = deserializeTransaction(rawdata.raw_tx);
-
   // console.debug(rawdata.raw_tx);
 
   let sp: SpendingCondition;
@@ -148,6 +184,7 @@ async function fetchtx(): Promise<Tx> {
     fee = sp.fee;
     nonce = sp.nonce;
   }
+  console.debug("original tx: ", tx);
 
   from = stxaddress(sp.signer);
 
@@ -181,7 +218,7 @@ tx status: ${status}
 }
 
 async function resubmit() {
-  const { status, tx, network, fee, from } = await fetchtx();
+  const { status, tx, network, fee, from, nonce } = await fetchtx();
 
   if (status !== "pending") {
     console.warn(
@@ -212,6 +249,18 @@ async function resubmit() {
   }
 
   let newtx: StacksTransaction;
+  // updating nonces with info from v2/account endpoint
+  if (tx.auth.authType === AuthType.Sponsored) {
+    if (tx.auth.sponsorSpendingCondition !== undefined) {
+      tx.auth.sponsorSpendingCondition.nonce = BigInt(
+        await getNodeNonce(stxaddress(tx.auth.sponsorSpendingCondition.signer))
+      );
+    }
+  }
+
+  tx.auth.spendingCondition.nonce = BigInt(
+    await getNodeNonce(stxaddress(tx.auth.spendingCondition.signer))
+  );
 
   const privkey = createStacksPrivateKey(options.key);
   if (tx.auth.authType === AuthType.Standard) {
@@ -225,9 +274,10 @@ async function resubmit() {
       sponsorPrivateKey: options.key,
       fee: options.fee,
       network: network,
+      // sponsorNonce: nonce,
     });
   }
-
+  console.log("resubmission tx: ", tx);
   const reply = await broadcastTransaction(newtx, network);
   console.log(reply);
 }
