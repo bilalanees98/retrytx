@@ -48,7 +48,7 @@ usage:
   resubmit transaction:
     retrytx --txid 0xtransactionID --key secret-key --fee new-fee-in-ustx [--network testnet | mainnet]
 
-  secret key can also be set with the $SECRET_KEY environment variable
+  secret key can also be set with the $SECRET_KEY environment variable, you can use a .env file as well
   network defaults to mainnet
 `);
 
@@ -218,8 +218,9 @@ tx status: ${status}
 }
 
 async function resubmit() {
-  const { status, tx, network, fee, from, nonce } = await fetchtx();
+  const { status, tx, network, fee, from, nonce, sp } = await fetchtx();
 
+  // tx.auth.spendingCondition.nonce = BigInt(2);
   if (status !== "pending") {
     console.warn(
       `transaction ${options.txid} might already be mined; status: ${status}`
@@ -249,18 +250,6 @@ async function resubmit() {
   }
 
   let newtx: StacksTransaction;
-  // updating nonces with info from v2/account endpoint
-  if (tx.auth.authType === AuthType.Sponsored) {
-    if (tx.auth.sponsorSpendingCondition !== undefined) {
-      tx.auth.sponsorSpendingCondition.nonce = BigInt(
-        await getNodeNonce(stxaddress(tx.auth.sponsorSpendingCondition.signer))
-      );
-    }
-  }
-
-  tx.auth.spendingCondition.nonce = BigInt(
-    await getNodeNonce(stxaddress(tx.auth.spendingCondition.signer))
-  );
 
   const privkey = createStacksPrivateKey(options.key);
   if (tx.auth.authType === AuthType.Standard) {
@@ -274,7 +263,7 @@ async function resubmit() {
       sponsorPrivateKey: options.key,
       fee: options.fee,
       network: network,
-      // sponsorNonce: nonce,
+      sponsorNonce: nonce,
     });
   }
   console.log("resubmission tx: ", tx);
